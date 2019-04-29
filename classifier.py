@@ -5,9 +5,6 @@ import tensorflow as tf
 
 from data import IesnData
 
-tf.enable_eager_execution()
-tf.logging.set_verbosity(tf.logging.INFO)
-
 INPUT_TENSOR_NAME = "image"
 SIGNATURE_NAME = "serving_default"
 LEARNING_RATE = 0.001
@@ -60,24 +57,24 @@ def model_fn(features, labels, mode, params):
 
     # 4. Generate necessary evaluation metrics.
     # Calculate root mean squared error as additional eval metric
-    eval_metric_ops = {
-        # "rmse": rmse
+    # eval_metric_ops = {
+    #     # "rmse": rmse
+    # }
+
+    metrics = {
+        # 'rmse': rmse,
+        'cross_entropy': cross_entropy
     }
 
-    train_tensors_log = {
-        # 'rmse': rmse,
-        'cross_entropy': cross_entropy,
-        'global_step': tf.train.get_global_step()
-    }
-    train_hook_list = [tf.train.LoggingTensorHook(tensors=train_tensors_log, every_n_iter=5)]
+    for metric_name, op in metrics.items():
+        tf.summary.scalar(metric_name, op)
 
     # Provide an estimator spec for `ModeKeys.EVAL` and `ModeKeys.TRAIN` modes.
     return tf.estimator.EstimatorSpec(
         mode=mode,
         loss=cross_entropy,
-        train_op=train_op,
-        training_hooks=train_hook_list,
-        eval_metric_ops=eval_metric_ops)
+        train_op=train_op)
+        # eval_metric_ops=metrics)
 
 
 def serving_input_fn(params):
@@ -99,16 +96,29 @@ def _input_fn(training_dir, training_filename):
         .get_train_dataset(tf.keras.applications.resnet50.preprocess_input,
                            num_classes=OUTPUT_SHAPE,
                            batch_size=5,
-                           prefetch_batch_num=10)
+                           prefetch_batch_num=1)
 
 
 if __name__ == "__main__":
     os.environ["AWS_REGION"] = "ap-southeast-2"
     os.environ["S3_ENDPOINT"] = "s3.ap-southeast-2.amazonaws.com"
     os.environ["AWS_LOG_LEVEL"] = "3"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+    tf.logging.set_verbosity(tf.logging.INFO)
+    tf.enable_eager_execution()
 
-    params = {"learning_rate": LEARNING_RATE}
+    STEPS_PER_EPOCH = 10
+    NUM_EPOCHS = 10
+    TOTAL_STEPS = NUM_EPOCHS * STEPS_PER_EPOCH
+
+    params = {
+        "learning_rate": LEARNING_RATE,
+        "total_steps": TOTAL_STEPS
+    }
+
     model_dir = "./output"
+
+    tf.logging.info("Total steps = {}, num_epochs = {}, batch size = {}".format(TOTAL_STEPS, NUM_EPOCHS, BATCH_SIZE))
 
     estimator = tf.estimator.Estimator(model_fn=model_fn, model_dir=model_dir, params=params)
     train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=100)

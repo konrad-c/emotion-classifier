@@ -55,12 +55,12 @@ class IesnData:
         label = tf.cast(example['emotion'], tf.int64)
         return image, label
 
-    def get_train_dataset(self, image_preprocessor, num_classes, batch_size=32, prefetch_batch_num=10, num_repeats=1):
+    def get_train_dataset(self, image_preprocessor, num_classes, batch_size=32, prefetch_batch_num=2):
         return self.tfrecordset \
             .map(lambda x: self._parse_tfrecord_(x)) \
             .map(lambda x, y: (image_preprocessor(x), y)) \
             .map(lambda x, y: ({"image": x}, tf.one_hot(y, num_classes))) \
             .shuffle(buffer_size=100) \
-            .repeat(num_repeats) \
-            .prefetch(buffer_size=batch_size*prefetch_batch_num) \
-            .batch(batch_size)
+            .repeat() \
+            .batch(batch_size) \
+            .prefetch(buffer_size=prefetch_batch_num)

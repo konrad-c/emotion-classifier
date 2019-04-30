@@ -1,6 +1,7 @@
 import boto3
 import json
 from tensorflow.python.lib.io import file_io
+from time import sleep
 import tensorflow as tf
 
 
@@ -53,14 +54,15 @@ class IesnData:
         image = tf.cast(image, tf.float32)
         image = tf.divide(image, 255.0)
         label = tf.cast(example['emotion'], tf.int64)
+        sleep(1)
         return image, label
 
-    def get_train_dataset(self, image_preprocessor, num_classes, batch_size=32, prefetch_batch_num=2):
+    def get_train_dataset(self, image_preprocessor, num_classes, buffer_size=32, batch_size=32, prefetch_batch_num=2):
         return self.tfrecordset \
+            .shuffle(buffer_size=buffer_size) \
+            .repeat() \
+            .prefetch(buffer_size=prefetch_batch_num*batch_size)
             .map(lambda x: self._parse_tfrecord_(x)) \
             .map(lambda x, y: (image_preprocessor(x), y)) \
             .map(lambda x, y: ({"image": x}, tf.one_hot(y, num_classes))) \
-            .shuffle(buffer_size=100) \
-            .repeat() \
-            .batch(batch_size) \
-            .prefetch(buffer_size=prefetch_batch_num)
+            .batch(batch_size)

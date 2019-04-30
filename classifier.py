@@ -61,20 +61,30 @@ def model_fn(features, labels, mode, params):
     #     # "rmse": rmse
     # }
 
+    predictions_dict = {"emotion": predictions}
+    label_tensor = tf.cast(labels, tf.float32)
+
+    accuracy, accuracy_update_op = tf.metrics.accuracy(labels=tf.argmax(label_tensor), predictions=tf.argmax(predictions), name='accuracy_op')
+    rmse = tf.losses.mean_squared_error(labels=label_tensor, predictions=predictions)
+
     metrics = {
-        # 'rmse': rmse,
-        'cross_entropy': cross_entropy
+        'accuracy': (accuracy, accuracy_update_op),
+        'loss': (cross_entropy, train_op)
     }
 
-    for metric_name, op in metrics.items():
-        tf.summary.scalar(metric_name, op)
+    logging_hook = tf.train.LoggingTensorHook({
+        'accuracy': accuracy,
+        'rmse': rmse,
+        'loss': cross_entropy,
+    }, every_n_iter=1)
 
     # Provide an estimator spec for `ModeKeys.EVAL` and `ModeKeys.TRAIN` modes.
     return tf.estimator.EstimatorSpec(
         mode=mode,
         loss=cross_entropy,
-        train_op=train_op)
-        # eval_metric_ops=metrics)
+        train_op=train_op,
+        training_hooks=[logging_hook],
+        eval_metric_ops=metrics)
 
 
 def serving_input_fn(params):
@@ -83,19 +93,22 @@ def serving_input_fn(params):
 
 
 def train_input_fn(training_dir="./"):
-    return _input_fn(training_dir, 'image-emotion-train.json')
+    metadata_path = os.path.join(training_dir, 'image-emotion-train.json')
+    return IesnData(metadata_path, record_limit=100) \
+        .get_train_dataset(tf.keras.applications.resnet50.preprocess_input,
+                           num_classes=OUTPUT_SHAPE,
+                           buffer_size=10,
+                           batch_size=10,
+                           prefetch_batch_num=1)
 
 
 def eval_input_fn(training_dir="./"):
-    return _input_fn(training_dir, 'image-emotion-eval.json')
-
-
-def _input_fn(training_dir, training_filename):
-    metadata_path = os.path.join(training_dir, training_filename)
+    metadata_path = os.path.join(training_dir, 'image-emotion-eval.json')
     return IesnData(metadata_path, record_limit=30) \
         .get_train_dataset(tf.keras.applications.resnet50.preprocess_input,
                            num_classes=OUTPUT_SHAPE,
-                           batch_size=5,
+                           buffer_size=10,
+                           batch_size=10,
                            prefetch_batch_num=1)
 
 
@@ -107,6 +120,12 @@ if __name__ == "__main__":
     tf.logging.set_verbosity(tf.logging.INFO)
     tf.enable_eager_execution()
 
+    configuration = tf.estimator.RunConfig(
+        model_dir="./output",
+        keep_checkpoint_max=5,
+        save_checkpoints_steps=5,
+        log_step_count_steps=1)  # set the frequency of logging steps for loss function
+
     STEPS_PER_EPOCH = 10
     NUM_EPOCHS = 10
     TOTAL_STEPS = NUM_EPOCHS * STEPS_PER_EPOCH
@@ -116,11 +135,13 @@ if __name__ == "__main__":
         "total_steps": TOTAL_STEPS
     }
 
-    model_dir = "./output"
-
     tf.logging.info("Total steps = {}, num_epochs = {}, batch size = {}".format(TOTAL_STEPS, NUM_EPOCHS, BATCH_SIZE))
 
-    estimator = tf.estimator.Estimator(model_fn=model_fn, model_dir=model_dir, params=params)
-    train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=100)
-    eval_spec = tf.estimator.EvalSpec(eval_input_fn)
-    tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
+    estimator = tf.estimator.Estimator(model_fn=model_fn, params=params, config=configuration)
+    train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=300)
+    eval_spec = tf.estimator.EvalSpec(eval_input_fn, steps=10)
+
+    estimator.train(train_input_fn, steps=10)
+    results = estimator.evaluate(eval_input_fn, steps=5)
+    print(results)
+    # tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)

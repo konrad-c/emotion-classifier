@@ -5,11 +5,12 @@ import tensorflow as tf
 
 
 class IesnData:
-    s3bucket = "konrad-data-storage"
     tfrecordset: tf.data.TFRecordDataset
 
-    def __init__(self, dataset_path="image-emotion-subset.json", local_metadata_path="./image-emotion-data.json", record_limit=None):
-        self.tfrecordset, self.num_records = self._get_tfrecordset_(dataset_path, local_metadata_path, record_limit)
+    def __init__(self, dataset_path="s3://konrad-data-storage/image-emotion-subset.json", record_limit=None):
+        self.s3bucket, s3path = dataset_path.replace('s3://', '').split('/', 1)
+        self.local_metadata_path = './' + s3path
+        self.tfrecordset, self.num_records = self._get_tfrecordset_(s3path, self.local_metadata_path, record_limit)
 
     def _get_tfrecordset_(self, dataset_path, local_path, limit=None):
         try:

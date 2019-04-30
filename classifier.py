@@ -89,7 +89,7 @@ def _input_fn(filename,
               buffer_size=2 * BATCH_SIZE,
               batch_size=BATCH_SIZE,
               prefetch_batch_num=2):
-    return IesnData(dataset_path=filename, local_metadata_path='./' + filename, record_limit=record_limit) \
+    return IesnData(dataset_path=filename, record_limit=record_limit) \
         .get_dataset(tf.keras.applications.resnet50.preprocess_input,
                      num_classes=OUTPUT_SHAPE,
                      buffer_size=buffer_size,

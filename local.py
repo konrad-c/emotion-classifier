@@ -29,7 +29,7 @@ def get_estimator():
 # Local arguments
 cur_mode = tf.estimator.ModeKeys.TRAIN
 
-filename = "image-emotion-subset.json"
+filename = "s3://konrad-data-storage/image-emotion-subset.json"
 estimator = get_estimator()
 
 if cur_mode == tf.estimator.ModeKeys.TRAIN:

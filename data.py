@@ -1,24 +1,22 @@
 import boto3
 import json
 from tensorflow.python.lib.io import file_io
-from time import sleep
 import tensorflow as tf
 
 
 class IesnData:
-    dataset_path = "image-emotion-subset.json"
     s3bucket = "konrad-data-storage"
     tfrecordset: tf.data.TFRecordDataset
 
-    def __init__(self, local_metadata_path="./image-emotion-subset.json", record_limit=None):
-        self.tfrecordset, self.num_records = self._get_tfrecordset_(local_metadata_path, record_limit)
+    def __init__(self, dataset_path="image-emotion-subset.json", local_metadata_path="./image-emotion-data.json", record_limit=None):
+        self.tfrecordset, self.num_records = self._get_tfrecordset_(dataset_path, local_metadata_path, record_limit)
 
-    def _get_tfrecordset_(self, local_path, limit=None):
+    def _get_tfrecordset_(self, dataset_path, local_path, limit=None):
         try:
             dataset = open(local_path, 'r')
         except FileNotFoundError:
             s3 = boto3.client("s3")
-            s3.download_file(self.s3bucket, self.dataset_path, local_path)
+            s3.download_file(self.s3bucket, dataset_path, local_path)
             dataset = open(local_path, 'r')
         tfrecord_filenames = []
         size = 0
@@ -54,15 +52,14 @@ class IesnData:
         image = tf.cast(image, tf.float32)
         image = tf.divide(image, 255.0)
         label = tf.cast(example['emotion'], tf.int64)
-        sleep(1)
         return image, label
 
-    def get_train_dataset(self, image_preprocessor, num_classes, buffer_size=32, batch_size=32, prefetch_batch_num=2):
+    def get_dataset(self, image_preprocessor, num_classes, buffer_size=32, batch_size=32, prefetch_batch_num=2):
         return self.tfrecordset \
-            .shuffle(buffer_size=buffer_size) \
-            .repeat() \
-            .prefetch(buffer_size=prefetch_batch_num*batch_size)
             .map(lambda x: self._parse_tfrecord_(x)) \
             .map(lambda x, y: (image_preprocessor(x), y)) \
             .map(lambda x, y: ({"image": x}, tf.one_hot(y, num_classes))) \
-            .batch(batch_size)
+            .shuffle(buffer_size=buffer_size) \
+            .repeat() \
+            .batch(batch_size) \
+            .prefetch(buffer_size=prefetch_batch_num)

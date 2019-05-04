@@ -1,8 +1,11 @@
+import boto3
+import os
+import argparse
+import json
+from tensorflow.python.lib.io import file_io
 from tensorflow.python.estimator.export.export import build_raw_serving_input_receiver_fn
 from tensorflow.python.estimator.export.export_output import PredictOutput
 import tensorflow as tf
-
-from data import IesnData
 
 INPUT_TENSOR_NAME = "image"
 SIGNATURE_NAME = "serving_default"
@@ -95,3 +98,98 @@ def _input_fn(filename,
                      buffer_size=buffer_size,
                      batch_size=batch_size,
                      prefetch_batch_num=prefetch_batch_num)
+
+
+class IesnData:
+    tfrecordset: tf.data.TFRecordDataset
+
+    def __init__(self, dataset_path="s3://konrad-data-storage/image-emotion-subset.json", record_limit=None):
+        self.s3bucket, s3path = dataset_path.replace('s3://', '').split('/', 1)
+        self.local_metadata_path = './' + s3path
+        self.tfrecordset, self.num_records = self._get_tfrecordset_(s3path, self.local_metadata_path, record_limit)
+
+    def _get_tfrecordset_(self, dataset_path, local_path, limit=None):
+        try:
+            dataset = open(local_path, 'r')
+        except FileNotFoundError:
+            s3 = boto3.client("s3")
+            s3.download_file(self.s3bucket, dataset_path, local_path)
+            dataset = open(local_path, 'r')
+        tfrecord_filenames = []
+        size = 0
+        for datapoint in dataset:
+            filename = 's3://' + self.s3bucket + '/image-emotion-tfrecords/' + json.loads(datapoint)["id"] + '.tfrecord'
+            if file_io.file_exists(filename):
+                tfrecord_filenames.append(filename)
+                size += 1
+            if limit is not None and size >= limit:
+                break
+        return tf.data.TFRecordDataset(tfrecord_filenames), size
+
+    @staticmethod
+    def _parse_tfrecord_(serialized_example):
+        features = {
+            'valence': tf.FixedLenFeature([], tf.float32),
+            'arousal': tf.FixedLenFeature([], tf.float32),
+            'dominance': tf.FixedLenFeature([], tf.float32),
+            'emotion': tf.FixedLenFeature([], tf.int64),
+            'height': tf.FixedLenFeature([], tf.int64),
+            'width': tf.FixedLenFeature([], tf.int64),
+            'depth': tf.FixedLenFeature([], tf.int64),
+            'image_raw': tf.FixedLenFeature([], tf.string)
+        }
+        example = tf.parse_single_example(serialized_example, features)
+        height = tf.cast(example['height'], tf.int64)
+        width = tf.cast(example['width'], tf.int64)
+        depth = tf.cast(example['depth'], tf.int64)
+        image = tf.reshape(
+            tf.image.decode_jpeg(example['image_raw']),
+            [height, width, depth]
+        )
+        image = tf.cast(image, tf.float32)
+        image = tf.divide(image, 255.0)
+        label = tf.cast(example['emotion'], tf.int64)
+        return image, label
+
+    def get_dataset(self, image_preprocessor, num_classes, buffer_size=32, batch_size=32, prefetch_batch_num=2):
+        return self.tfrecordset \
+            .map(lambda x: self._parse_tfrecord_(x)) \
+            .map(lambda x, y: (image_preprocessor(x), y)) \
+            .map(lambda x, y: ({"image": x}, tf.one_hot(y, num_classes))) \
+            .shuffle(buffer_size=buffer_size) \
+            .repeat() \
+            .batch(batch_size) \
+            .prefetch(buffer_size=prefetch_batch_num)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+
+    # hyperparameters sent by the client are passed as command-line arguments to the script.
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
+
+    # input data and model directories
+    parser.add_argument('--model_dir', type=str, default="./model")
+    parser.add_argument('--train_path', type=str, default="s3://konrad-data-storage/image-emotion-100k.json")
+    parser.add_argument('--eval_path', type=str, default="s3://konrad-data-storage/image-emotion-subset.json")
+
+    args, _ = parser.parse_known_args()
+
+    # ... load from args.train and args.test, train a model, write model to args.model_dir.
+
+    configuration = tf.estimator.RunConfig(
+        model_dir=args.model_dir,
+        keep_checkpoint_max=5,
+        save_checkpoints_steps=5,
+        log_step_count_steps=5)  # set the frequency of logging steps for loss function
+
+    params = {
+        "learning_rate": args.learning_rate,
+        "total_steps": 100
+    }
+
+    estimator = tf.estimator.Estimator(model_fn=model_fn, params=params, config=configuration)
+    train_spec = tf.estimator.TrainSpec(lambda: train_input_fn(args.train_path), max_steps=args.epochs)
+    eval_spec = tf.estimator.EvalSpec(lambda: eval_input_fn(args.eval_path))
+    tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)

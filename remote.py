@@ -6,8 +6,8 @@ estimator = TensorFlow(entry_point='classifier.py',
                     #    model_dir='s3://konrad-data-storage/emotion-classifier-labels',
                        py_version='py3',
                        train_instance_count=1,
-                       train_instance_type='local',
-                     #   train_instance_type='ml.p2.xlarge',
+                     #   train_instance_type='local',
+                       train_instance_type='ml.p2.xlarge',
                        base_job_name='emotion-label-classifier',
                        
                        hyperparameters={

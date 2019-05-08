@@ -2,6 +2,8 @@ import boto3
 import os
 import argparse
 import json
+import pathlib
+
 from tensorflow.python.lib.io import file_io
 from tensorflow.python.estimator.export.export import build_raw_serving_input_receiver_fn
 from tensorflow.python.estimator.export.export_output import PredictOutput
@@ -10,10 +12,10 @@ import tensorflow as tf
 INPUT_TENSOR_NAME = "image"
 SIGNATURE_NAME = "serving_default"
 LEARNING_RATE = 0.001
-BATCH_SIZE = 128
+BATCH_SIZE = 5
 
 # Input / Output shape
-IMG_SIZE = 512
+IMG_SIZE = 128
 IMG_SHAPE = [IMG_SIZE, IMG_SIZE, 3]
 OUTPUT_SHAPE = 9
 
@@ -59,107 +61,71 @@ def model_fn(features, labels, mode, params):
         global_step=tf.train.get_global_step())
 
     # 4. Generate necessary evaluation metrics.
-    label_tensor = tf.cast(labels, tf.float32)
-    accuracy, accuracy_update_op = tf.metrics.accuracy(labels=tf.argmax(label_tensor), predictions=tf.argmax(predictions), name='accuracy_op')
-    metrics = {
-        'accuracy': (accuracy, accuracy_update_op),
-        'cross_entropy': (cross_entropy, train_op)
-    }
+    # label_tensor = tf.cast(labels, tf.float32)
+    # accuracy, accuracy_update_op = tf.metrics.accuracy(labels=tf.argmax(label_tensor), predictions=tf.argmax(predictions), name='accuracy_op')
+    # metrics = {
+    #     'accuracy': (accuracy, accuracy_update_op),
+    #     'cross_entropy': (cross_entropy, train_op)
+    # }
 
     # Provide an estimator spec for `ModeKeys.EVAL` and `ModeKeys.TRAIN` modes.
     return tf.estimator.EstimatorSpec(
         mode=mode,
         loss=cross_entropy,
-        train_op=train_op,
-        eval_metric_ops=metrics)
+        train_op=train_op)
+        # eval_metric_ops=metrics)
 
 
-def serving_input_fn(params):
+def serving_input_fn():
     tensor = tf.placeholder(tf.float32, shape=IMG_SHAPE)
-    return build_raw_serving_input_receiver_fn({INPUT_TENSOR_NAME: tensor})()
+    receiver_tensors = { INPUT_TENSOR_NAME: tensor }
+    return tf.estimator.export.ServingInputReceiver(features, receiver_tensors)
 
 
-def train_input_fn(training_filename):
-    return _input_fn(training_filename)
+def _input_fn(directory,
+            limit=None,
+            buffer_size=2 * BATCH_SIZE,
+            batch_size=BATCH_SIZE,
+            prefetch_batch_num=2):
+    filepath_generator = pathlib.Path(directory).iterdir()
+    files = tf.data.Dataset.from_generator(filepath_generator, tf.string, (tf.TensorShape([None])))
+    # files = tf.data.Dataset.list_files(directory, shuffle=True)
+    if limit is not None:
+        files = files.take(limit)
+    image_preprocessor = tf.keras.applications.resnet50.preprocess_input
+    return tf.data.TFRecordDataset(files) \
+        .map(lambda x: _parse_tfrecord_(x)) \
+        .map(lambda x, y: (image_preprocessor(x), y)) \
+        .map(lambda x, y: ({"image": x}, tf.one_hot(y, OUTPUT_SHAPE))) \
+        .shuffle(buffer_size=buffer_size) \
+        .repeat() \
+        .batch(batch_size) \
+        .prefetch(buffer_size=prefetch_batch_num)
 
 
-def eval_input_fn(eval_filename):
-    return _input_fn(eval_filename)
-
-
-def _input_fn(filename,
-              record_limit=None,
-              buffer_size=2 * BATCH_SIZE,
-              batch_size=BATCH_SIZE,
-              prefetch_batch_num=2):
-    return IesnData(dataset_path=filename, record_limit=record_limit) \
-        .get_dataset(tf.keras.applications.resnet50.preprocess_input,
-                     num_classes=OUTPUT_SHAPE,
-                     buffer_size=buffer_size,
-                     batch_size=batch_size,
-                     prefetch_batch_num=prefetch_batch_num)
-
-
-class IesnData:
-    tfrecordset: tf.data.TFRecordDataset
-
-    def __init__(self, dataset_path="s3://konrad-data-storage/image-emotion-subset.json", record_limit=None):
-        self.s3bucket, s3path = dataset_path.replace('s3://', '').split('/', 1)
-        self.local_metadata_path = './' + s3path
-        self.tfrecordset, self.num_records = self._get_tfrecordset_(s3path, self.local_metadata_path, record_limit)
-
-    def _get_tfrecordset_(self, dataset_path, local_path, limit=None):
-        try:
-            dataset = open(local_path, 'r')
-        except FileNotFoundError:
-            s3 = boto3.client("s3")
-            s3.download_file(self.s3bucket, dataset_path, local_path)
-            dataset = open(local_path, 'r')
-        tfrecord_filenames = []
-        size = 0
-        for datapoint in dataset:
-            filename = 's3://' + self.s3bucket + '/image-emotion-tfrecords/' + json.loads(datapoint)["id"] + '.tfrecord'
-            if file_io.file_exists(filename):
-                tfrecord_filenames.append(filename)
-                size += 1
-            if limit is not None and size >= limit:
-                break
-        return tf.data.TFRecordDataset(tfrecord_filenames), size
-
-    @staticmethod
-    def _parse_tfrecord_(serialized_example):
-        features = {
-            'valence': tf.FixedLenFeature([], tf.float32),
-            'arousal': tf.FixedLenFeature([], tf.float32),
-            'dominance': tf.FixedLenFeature([], tf.float32),
-            'emotion': tf.FixedLenFeature([], tf.int64),
-            'height': tf.FixedLenFeature([], tf.int64),
-            'width': tf.FixedLenFeature([], tf.int64),
-            'depth': tf.FixedLenFeature([], tf.int64),
-            'image_raw': tf.FixedLenFeature([], tf.string)
-        }
-        example = tf.parse_single_example(serialized_example, features)
-        height = tf.cast(example['height'], tf.int64)
-        width = tf.cast(example['width'], tf.int64)
-        depth = tf.cast(example['depth'], tf.int64)
-        image = tf.reshape(
-            tf.image.decode_jpeg(example['image_raw']),
-            [height, width, depth]
-        )
-        image = tf.cast(image, tf.float32)
-        image = tf.divide(image, 255.0)
-        label = tf.cast(example['emotion'], tf.int64)
-        return image, label
-
-    def get_dataset(self, image_preprocessor, num_classes, buffer_size=32, batch_size=32, prefetch_batch_num=2):
-        return self.tfrecordset \
-            .map(lambda x: self._parse_tfrecord_(x)) \
-            .map(lambda x, y: (image_preprocessor(x), y)) \
-            .map(lambda x, y: ({"image": x}, tf.one_hot(y, num_classes))) \
-            .shuffle(buffer_size=buffer_size) \
-            .repeat() \
-            .batch(batch_size) \
-            .prefetch(buffer_size=prefetch_batch_num)
+def _parse_tfrecord_(serialized_example):
+    features = {
+        'valence': tf.FixedLenFeature([], tf.float32),
+        'arousal': tf.FixedLenFeature([], tf.float32),
+        'dominance': tf.FixedLenFeature([], tf.float32),
+        'emotion': tf.FixedLenFeature([], tf.int64),
+        'height': tf.FixedLenFeature([], tf.int64),
+        'width': tf.FixedLenFeature([], tf.int64),
+        'depth': tf.FixedLenFeature([], tf.int64),
+        'image_raw': tf.FixedLenFeature([], tf.string)
+    }
+    example = tf.parse_single_example(serialized_example, features)
+    height = tf.cast(example['height'], tf.int64)
+    width = tf.cast(example['width'], tf.int64)
+    depth = tf.cast(example['depth'], tf.int64)
+    image = tf.reshape(
+        tf.image.decode_jpeg(example['image_raw']),
+        [height, width, depth]
+    )
+    image = tf.cast(image, tf.float32)
+    image = tf.divide(image, 255.0)
+    label = tf.cast(example['emotion'], tf.int64)
+    return image, label
 
 
 if __name__ == '__main__':
@@ -171,18 +137,20 @@ if __name__ == '__main__':
 
     # input data and model directories
     parser.add_argument('--model_dir', type=str, default="./model")
-    parser.add_argument('--train_path', type=str, default="s3://konrad-data-storage/image-emotion-100k.json")
-    parser.add_argument('--eval_path', type=str, default="s3://konrad-data-storage/image-emotion-subset.json")
+
+    parser.add_argument('--train', type=str, default=os.environ.get('SM_CHANNEL_TRAIN'))
+    parser.add_argument('--eval', type=str, default=os.environ.get('SM_CHANNEL_EVAL'))
 
     args, _ = parser.parse_known_args()
 
-    # ... load from args.train and args.test, train a model, write model to args.model_dir.
+    # os.environ["AWS_REGION"] = "ap-southeast-2"
+    # os.environ["S3_ENDPOINT"] = "s3.ap-southeast-2.amazonaws.com"
 
     configuration = tf.estimator.RunConfig(
         model_dir=args.model_dir,
         keep_checkpoint_max=5,
-        save_checkpoints_steps=5,
-        log_step_count_steps=5)  # set the frequency of logging steps for loss function
+        save_checkpoints_steps=1,
+        log_step_count_steps=1)  # set the frequency of logging steps for loss function
 
     params = {
         "learning_rate": args.learning_rate,
@@ -190,6 +158,9 @@ if __name__ == '__main__':
     }
 
     estimator = tf.estimator.Estimator(model_fn=model_fn, params=params, config=configuration)
-    train_spec = tf.estimator.TrainSpec(lambda: train_input_fn(args.train_path), max_steps=args.epochs)
-    eval_spec = tf.estimator.EvalSpec(lambda: eval_input_fn(args.eval_path))
-    tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
+
+    if args.train:
+        estimator.train(input_fn=lambda : _input_fn(args.train), steps=args.epochs)
+    elif args.eval:
+        scores = estimator.evaluate(input_fn=lambda : _input_fn(args.eval), steps=5)
+        print("Evaluation scores: " + scores)

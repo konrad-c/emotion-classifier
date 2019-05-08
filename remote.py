@@ -18,6 +18,6 @@ estimator = TensorFlow(entry_point='classifier.py',
 
 
 estimator.fit({
-    "train": "s3://konrad-data-storage/image-emotion-tfrecords-128/0000effb-95f4-431a-9f63-f90a65d798c0.tfrecord",
-    "eval": "s3://konrad-data-storage/image-emotion-tfrecords-128/0003438f-9abf-4bd2-9637-8a79c2df248d.tfrecord"
+    "train": "s3://konrad-data-storage/image-emotion-tfrecords-128-subset",
+    "eval": "s3://konrad-data-storage/image-emotion-tfrecords-128-subset"
 })

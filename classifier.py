@@ -83,13 +83,14 @@ def serving_input_fn():
 
 
 def _input_fn(directory,
+            glob="*",
             limit=None,
             buffer_size=2 * BATCH_SIZE,
             batch_size=BATCH_SIZE,
             prefetch_batch_num=2):
-    filepath_generator = pathlib.Path(directory).iterdir()
-    files = tf.data.Dataset.from_generator(filepath_generator, tf.string, (tf.TensorShape([None])))
-    # files = tf.data.Dataset.list_files(directory, shuffle=True)
+    filepaths = map(lambda x: str(x), pathlib.Path(directory).glob(glob))
+    filepaths = list(filepaths)
+    files = tf.data.Dataset.from_tensor_slices(filepaths)
     if limit is not None:
         files = files.take(limit)
     image_preprocessor = tf.keras.applications.resnet50.preprocess_input

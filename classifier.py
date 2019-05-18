@@ -4,7 +4,7 @@ import pathlib
 
 import tensorflow as tf
 from tensorflow.python.keras.layers import Dense
-from tensorflow.python.keras.losses import sparse_categorical_crossentropy
+from tensorflow.python.keras.losses import categorical_crossentropy
 from tensorflow.python.keras.models import Model
 from tensorflow.python.keras.optimizers import Adam
 
@@ -31,6 +31,9 @@ def build_classifier():
     preds = Dense(OUTPUT_SHAPE, activation='softmax')(x)
     return Model(inputs=base_model.inputs, outputs=preds)
 
+def _input_size(directory, glob="*"):
+    filepaths = map(lambda x: str(x), pathlib.Path(directory).glob(glob))
+    return len(list(filepaths))
 
 def _input_fn(directory,
               glob="*",
@@ -48,6 +51,7 @@ def _input_fn(directory,
         .map(lambda x: _parse_tfrecord_(x)) \
         .map(lambda x, y: (image_preprocessor(x), y)) \
         .shuffle(buffer_size=buffer_size) \
+        .repeat() \
         .batch(batch_size) \
         .prefetch(buffer_size=prefetch_batch_num)
     # Create an iterator
@@ -104,21 +108,27 @@ if __name__ == '__main__':
 
     classifier = build_classifier()
     classifier.compile(optimizer=Adam(lr=args.learning_rate),
-                       loss=sparse_categorical_crossentropy,
+                       loss=categorical_crossentropy,
                        metrics=['accuracy'])
 
-    checkpoint_path = args.model_dir + "/checkpoint_classifier.ckpt"
-    checkpoint_dir = args.model_dir
+    checkpoint_dir = os.environ.get("SM_MODEL_DIR")
+    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_classifier.ckpt")
     cp_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_path,
                                                      save_weights_only=True,
                                                      verbose=1)
-
+    train_size = _input_size(args.train)
     train_x, train_y = _input_fn(args.train)
+
+    eval_size = _input_size(args.eval)
     eval_x, eval_y = _input_fn(args.eval)
 
+    steps_per_epoch_train = max(train_size // BATCH_SIZE, 1)
+    steps_per_epoch_eval = max(eval_size // BATCH_SIZE, 1)
     classifier.fit(train_x, train_y,
                    epochs=args.epochs,
+                   steps_per_epoch=steps_per_epoch_train,
                    validation_data=(eval_x, eval_y),
+                   validation_steps=steps_per_epoch_eval,
                    callbacks=[cp_callback])
 
-    classifier.save(args.model_dir + '/trained_model.h5')
+    classifier.save(os.path.join(os.environ.get("SM_OUTPUT_DIR"), "trained_model.h5"))

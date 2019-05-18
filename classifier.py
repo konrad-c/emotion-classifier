@@ -12,7 +12,7 @@ import tensorflow as tf
 INPUT_TENSOR_NAME = "image"
 SIGNATURE_NAME = "serving_default"
 LEARNING_RATE = 0.001
-BATCH_SIZE = 5
+BATCH_SIZE = 32
 
 # Input / Output shape
 IMG_SIZE = 128
@@ -147,15 +147,17 @@ if __name__ == '__main__':
     # os.environ["AWS_REGION"] = "ap-southeast-2"
     # os.environ["S3_ENDPOINT"] = "s3.ap-southeast-2.amazonaws.com"
 
+    model_dir = os.environ.get("SM_OUTPUT_DATA_DIR")
+
     configuration = tf.estimator.RunConfig(
-        model_dir=args.model_dir,
+        model_dir=model_dir,
         keep_checkpoint_max=5,
         save_checkpoints_steps=1,
         log_step_count_steps=1)  # set the frequency of logging steps for loss function
 
     params = {
-        "learning_rate": args.learning_rate,
-        "total_steps": 100
+        "learning_rate": args.learning_rate
+        # "total_steps": 100
     }
 
     estimator = tf.estimator.Estimator(model_fn=model_fn, params=params, config=configuration)

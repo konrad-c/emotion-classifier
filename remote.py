@@ -9,7 +9,6 @@ estimator = TensorFlow(entry_point='classifier.py',
                      #   train_instance_type='local',
                        train_instance_type='ml.p2.xlarge',
                        base_job_name='emotion-label-classifier',
-                       
                        hyperparameters={
                            'learning_rate': 0.001,
                            'epochs': 10,

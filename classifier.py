@@ -31,9 +31,11 @@ def build_classifier():
     preds = Dense(OUTPUT_SHAPE, activation='softmax')(x)
     return Model(inputs=base_model.inputs, outputs=preds)
 
+
 def _input_size(directory, glob="*"):
     filepaths = map(lambda x: str(x), pathlib.Path(directory).glob(glob))
     return len(list(filepaths))
+
 
 def _input_fn(directory,
               glob="*",
@@ -113,9 +115,14 @@ if __name__ == '__main__':
 
     output_dir = os.environ.get("SM_MODEL_DIR")
     checkpoint_path = os.path.join(output_dir, "checkpoint_classifier.ckpt")
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_path,
-                                                     save_weights_only=True,
-                                                     verbose=1)
+    cp_local_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_path,
+                                                           save_weights_only=True,
+                                                           verbose=1)
+
+    s3_cp_path = args.model_dir + "/checkpoint_classifier.ckpt"
+    cp_s3_callback = tf.keras.callbacks.ModelCheckpoint(s3_cp_path,
+                                                        save_weights_only=True,
+                                                        verbose=1)
     train_size = _input_size(args.train)
     train_x, train_y = _input_fn(args.train)
 
@@ -129,6 +136,6 @@ if __name__ == '__main__':
                    steps_per_epoch=steps_per_epoch_train,
                    validation_data=(eval_x, eval_y),
                    validation_steps=steps_per_epoch_eval,
-                   callbacks=[cp_callback])
+                   callbacks=[cp_local_callback, cp_s3_callback])
 
     classifier.save(os.path.join(output_dir, "trained_model.h5"))

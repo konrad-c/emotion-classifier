@@ -111,8 +111,8 @@ if __name__ == '__main__':
                        loss=categorical_crossentropy,
                        metrics=['accuracy'])
 
-    checkpoint_dir = os.environ.get("SM_MODEL_DIR")
-    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_classifier.ckpt")
+    output_dir = os.environ.get("SM_MODEL_DIR")
+    checkpoint_path = os.path.join(output_dir, "checkpoint_classifier.ckpt")
     cp_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_path,
                                                      save_weights_only=True,
                                                      verbose=1)
@@ -131,4 +131,4 @@ if __name__ == '__main__':
                    validation_steps=steps_per_epoch_eval,
                    callbacks=[cp_callback])
 
-    classifier.save(os.path.join(os.environ.get("SM_OUTPUT_DIR"), "trained_model.h5"))
+    classifier.save(os.path.join(output_dir, "trained_model.h5"))

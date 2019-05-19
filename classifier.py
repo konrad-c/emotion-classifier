@@ -32,13 +32,13 @@ def build_classifier():
     return Model(inputs=base_model.inputs, outputs=preds)
 
 
-def _input_size(directory, glob="*"):
+def _input_size(directory, glob="*.tfrecord"):
     filepaths = map(lambda x: str(x), pathlib.Path(directory).glob(glob))
     return len(list(filepaths))
 
 
 def _input_fn(directory,
-              glob="*",
+              glob="*.tfrecord",
               limit=None,
               buffer_size=2 * BATCH_SIZE,
               batch_size=BATCH_SIZE,
